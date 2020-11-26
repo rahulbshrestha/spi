@@ -7,19 +7,21 @@ C program which emulates SPI data transfer
 #include <stdbool.h>
 
 void sender(bool isMsb);
-void print(char* input);
+void print(char* input, int fileSize);
 void receiver(char* input, bool isMsb);
 
+void *new_memset(void *v, int n, int len);
 void stringcat(char* dest, const char src);
 size_t str_len (const char *str);
 char* copy_string(char *dest, const char *src, int n);
-char* append_strings(char* dest, const char* src, int n);
 void reverse_string(char *head);
 char* merge_chars(char* dest, const char* src, size_t n);
+void print_file(char *filename);
+void copy_file(char* src, char* dest);
 
 int main(){
     
-    bool isMsb = true; //Change this variable for MSB or LSB
+    bool isMsb = false; //Change this variable for MSB or LSB
 
     if (isMsb == false){
         printf("--lsb first--\n");
@@ -28,10 +30,48 @@ int main(){
     }
     
     sender(isMsb);
+
     return 0;
 }
 
+/* Implementation of memset */
+
+void *new_memset(void *v, int n, int len){
+    unsigned char *p = v;
+    while(len > 0){
+        *p = n;
+        p++;
+        len--;
+    }
+
+    return v;
+}
+
+/*Print contents of file*/
+
+void print_file(char *filename){
+     //Print contents of file (this is after conversion has already been done)
+    FILE *fptr; 
+    char c;
+    fptr = fopen(filename, "r"); 
+    if (fptr == NULL) 
+    { 
+        printf("Cannot open file \n"); 
+        exit(0); 
+    } 
+    c = fgetc(fptr); 
+    while (c != EOF) 
+    { 
+        printf ("%c", c); 
+        c = fgetc(fptr); 
+    } 
+  
+    fclose(fptr);
+
+}
+
 /* Reverse string */
+
 void reverse_string(char *head){
   char *tail = head;
   while(*tail){ // Find end null 
@@ -47,8 +87,7 @@ void reverse_string(char *head){
 }
 
 /* Calculate length of string */
-size_t str_len (const char *str)
-{
+size_t str_len (const char *str){
     for (size_t len = 0;;++len){
         if (str[len]==0){
             return len;
@@ -56,23 +95,8 @@ size_t str_len (const char *str)
     } 
 }
 
-/* Append one string to another string */
-char* append_strings(char* dest, const char* src, int n){
-	
-    char* ptr = dest;
-
-	while (*src && n--){
-		*dest = *src;
-		dest++;
-		src++;
-	}
-    
-    *dest = '\0';
-	return ptr;
-}
-
 /* Copy string from dest to src */
-char* copy_string(char *dest, const char *src, int n) {
+char* copy_string(char *dest, const char *src, int n){
     int i;
     for (i = 0; i < n && src[i] != '\0'; i++) {
         dest[i] = src[i];
@@ -107,14 +131,14 @@ char* merge_chars(char* dest, const char* src, size_t n)
 	return dest;
 }
 
-/* Reverse every byte*/
+/* Reverse every bit in input char*/
 char* reverse_bytes(char* input){
     int i;
     char new[1024] = {0};
     char reversed[1024] = {0};
 
     char *ptr = input;
-    for (i = 0; i < str_len(ptr)+8; i++, ptr += 8){
+    for (i = 0; i < str_len(ptr) + 16; i++, ptr += 8){
         copy_string(new, ptr, 8);
         reverse_string(new);
         merge_chars(reversed, new, sizeof(reversed));   
@@ -123,59 +147,86 @@ char* reverse_bytes(char* input){
     return input;
 }
 
-/* Read data from file, convert into binary and call 'receiver' function */
+/* Read data from file, convert every 20 bytes into binary and send it 'receiver' function */
 void sender(bool isMsb){
 
-    FILE *fp;
-    char buff[1024] = {0};
+    int x, numRead;
+    unsigned char buffer[20];
 
-    fp = fopen("../data/input.txt", "r");
-    fgets(buff, sizeof(buff), fp);
-    printf("Input data: %s\n\n", buff);
+    printf("\nInput data: ");
+    print_file("../data/input.txt");
+    printf("\n\n");
 
-    char *ptr = buff;
-    char binaryNum[1024] = {0};
-    int i;
-
-    //Converting ASCII characters to binary
-    for(; *ptr != 0; ++ptr){
-
-        // Do bitwise AND for every bit of the character
-        for(i = 7; i >= 0; --i){
-            if (*ptr & 1 << i){
-                stringcat(binaryNum, '1');
-            }else
-            {
-                stringcat(binaryNum, '0');
-            }
-        } 
-    }
-    char *reversed = NULL;
-    if (isMsb == true){
-        //Reverse every 8 bits (1 byte)
-        reversed = reverse_bytes(binaryNum);
-        
-        //Copying pointer to char array
-        append_strings(binaryNum, reversed, sizeof(binaryNum));
-        binaryNum[sizeof(binaryNum) - 1] = '\0';
-    }
-
-    print(binaryNum);
-
-    if (isMsb == true){
-        receiver(binaryNum, true);
-    }else{
-        receiver(binaryNum, false);
-    }
+    FILE *fp = fopen("../data/input.txt", "rb");
+    FILE *fq = fopen("../data/temp.txt", "w"); //clearing contents of file
     
+    fseek(fp, 0, SEEK_END);
+    int fileSize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    
+    char* read_data = (char*)malloc(fileSize * sizeof(char));
+    
+    for(x = 0; x < fileSize; x += 20) {
+        numRead = fread(buffer, 1, 20, fp);
+        if (numRead < 1) {
+            printf("error\n");
+            break;
+        }
+        if (numRead < 20) {
+            new_memset(&buffer[numRead], 0, 20-numRead);
+        }
+        
+        char *ptr = buffer;
+        char binaryNum[1024] = {0};
+        int i;
+
+        //Converting ASCII characters to binary
+        for(; *ptr != 0; ++ptr){
+
+            // Do bitwise AND for every bit of the character
+            for(i = 7; i >= 0; --i){
+                if (*ptr & 1 << i){
+                    stringcat(binaryNum, '1');
+                }else
+                {
+                    stringcat(binaryNum, '0');
+                }
+            } 
+        }
+        char *reversed = NULL;
+        if (isMsb == true){
+            //Reverse every 8 bits (1 byte)
+            reversed = reverse_bytes(binaryNum);
+
+            //Copying pointer to char array
+            copy_string(binaryNum, reversed, sizeof(binaryNum));
+            binaryNum[sizeof(binaryNum) - 1] = '\0';
+        }
+        
+        if (isMsb == true){
+            receiver(binaryNum, true);
+        }else{
+            receiver(binaryNum, false);
+        }
+        
+        merge_chars(read_data, binaryNum, sizeof(read_data));   
+    }
+    print(read_data, fileSize);
+    fclose(fp);
+    fclose(fq);  
+
+    //Copy contents of output file into original file
+    copy_file("../data/temp.txt", "../data/input.txt");
+    remove("../data/temp.txt");
 }
 
 /* Print CS, CLK and MOSI values */
-void print(char* input){
+void print(char* input, int fileSize){
 
     char *ptr = input;
-    char clk[1024] = {0};
-    char cs[1024] = {0};
+    char clk[fileSize * 8];
+    char cs[fileSize * 8];
     bool is0 = false;
     int i, spaceCount;
     
@@ -239,6 +290,34 @@ void print(char* input){
         printf("%c", input[i]);
     }
     printf("\n");
+    printf("\nData read (MISO): ");
+    print_file("../data/input.txt");
+    printf("\n");
+}
+
+void copy_file(char* src, char* dest){
+    FILE *fp1, *fp2;
+    int a;
+
+    fp1 = fopen(src, "r");
+    if (fp1 == NULL) {
+      printf("Error: File not found.");
+      exit(0);
+    }
+
+    fp2 = fopen(dest, "w");
+    if (fp2 == NULL) {
+      printf("Error: File not found.");
+      fclose(fp1);
+      exit(0);
+    }
+    while( (a = fgetc(fp1)) != EOF )
+    {
+      fputc(a, fp2);
+    }
+
+    fclose(fp1);
+    fclose(fp2);
 }
 
 /* Receive binary number, convert it into char and write to file */
@@ -251,7 +330,7 @@ void receiver(char* input, bool isMsb)  {
     char output[1024] = {0};
 
     char *reversed = NULL;
-    char *ptr;
+    char *ptr = NULL;
 
     if (isMsb == true){
         //Reverse every 8 bits (1 byte)
@@ -262,15 +341,13 @@ void receiver(char* input, bool isMsb)  {
     }
 
     // Converting binary back to char
-    for (i = 0; i < str_len(ptr)+8; i++, ptr += 8){
+    for (i = 0; i < str_len(ptr) + 16; i++, ptr += 8){
         copy_string(new, ptr, 8);
         c = strtol(new, 0, 2);
         stringcat(output, c);
     }
     
-    printf("\nData read (MISO): %s\n", output);
-    
-    fp = fopen("../data/input.txt", "w");
+    fp = fopen("../data/temp.txt", "a");
     fputs(output, fp);
     fclose(fp);
 }
